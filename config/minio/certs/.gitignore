@@ -1,0 +1,4 @@
+# Certificados TLS do MinIO — NÃO versionar chaves nem truststore gerados.
+*
+!.gitignore
+!README.md

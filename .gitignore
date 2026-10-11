@@ -1,0 +1,88 @@
+# ── Segredos e credenciais ───────────────────────────────────────────
+# Tudo que é credencial fica fora do Git. Versionados: só env.*.example,
+# com nomes de variáveis e valores de exemplo.
+.env
+.env.*
+*.env
+.envrc
+env_secrets/
+.env_secrets/
+secrets/
+
+# Chaves, certificados e keystores (gerados por scripts/minio/gen-tls-certs.sh)
+*.key
+*.pem
+*.crt
+*.cer
+*.p12
+*.pfx
+*.jks
+*.keystore
+
+# ── Dados ────────────────────────────────────────────────────────────
+# A stack não carrega dado nenhum; qualquer arquivo destes é local.
+*.csv
+*.xlsx
+*.xls
+*.parquet
+*.db
+*.sqlite
+*.sqlite3
+*.duckdb
+*.dump
+data/
+raw_data/
+saida-s3/
+
+# Backups e pacotes
+*.backup
+*.bak
+*.zip
+*.tar
+*.tar.gz
+*.rar
+*.7z
+
+# ── Artefatos da stack ───────────────────────────────────────────────
+# JARs de drivers de fonte ficam no host, não no repositório
+config/spark/jars/*.jar
+!config/spark/jars/.gitkeep
+
+# Projetos montados em /opt/delta-projects na stack local
+projects/
+
+# Scripts e overrides locais
+scripts/*.local.*
+docker-compose.override.yml
+
+# ── Python ───────────────────────────────────────────────────────────
+__pycache__/
+*.py[cod]
+.venv/
+venv/
+.pytest_cache/
+
+# ── Logs e temporários ───────────────────────────────────────────────
+logs/
+*.log
+*.log.*
+*.tmp
+*.temp
+*~
+
+# ── Documentação e anotações locais ──────────────────────────────────
+docs/
+
+# ── Editor, assistentes e sistema operacional ────────────────────────
+.vscode/
+.idea/
+*.swp
+*.swo
+.cursor/
+.cursorrules
+.cursorignore
+.claude/
+.DS_Store
+Thumbs.db
+Desktop.ini
+$RECYCLE.BIN/

@@ -1,0 +1,4 @@
+# Contexto mínimo: só Dockerfile, entrypoint e configs Spark.
+*.md
+.git
+.gitignore
