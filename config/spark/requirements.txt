@@ -1,0 +1,8 @@
+# Python dos executores Spark — alinhar com airflow-prod-3.0/requirements-pyspark-venv.txt
+# PySpark 4.1.2: mínimo pandas 2.2.0 e pyarrow 15.0.0 (mapInPandas / Arrow).
+pyspark==4.1.2
+delta-spark==4.1.0
+pandas>=2.2.0
+pyarrow>=15.0.0
+PyYAML
+psycopg2-binary
