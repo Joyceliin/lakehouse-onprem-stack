@@ -1,0 +1,48 @@
+<?xml version="1.0" encoding="UTF-8" standalone="no"?>
+<!--
+  hive-site.xml — SEM credenciais hardcoded.
+  - Usuario/senha do PostgreSQL: injetados via SERVICE_OPTS/secret no entrypoint
+    (-Djavax.jdo.option.ConnectionUserName / ConnectionPassword).
+  - Credenciais do MinIO/S3A: lidas das variáveis de ambiente AWS_ACCESS_KEY_ID /
+    AWS_SECRET_ACCESS_KEY (service account hive-meta) via EnvironmentVariableCredentialsProvider.
+-->
+<configuration>
+  <property>
+    <name>javax.jdo.option.ConnectionURL</name>
+    <value>jdbc:postgresql://hive-postgres:5432/hive_metastore</value>
+  </property>
+  <property>
+    <name>javax.jdo.option.ConnectionDriverName</name>
+    <value>org.postgresql.Driver</value>
+  </property>
+  <!-- ConnectionUserName e ConnectionPassword injetados no entrypoint -->
+  <property>
+    <name>hive.metastore.warehouse.dir</name>
+    <value>s3a://gold/warehouse</value>
+  </property>
+  <property>
+    <name>fs.s3a.endpoint</name>
+    <value>https://minio:9000</value>
+  </property>
+  <property>
+    <name>fs.s3a.impl</name>
+    <value>org.apache.hadoop.fs.s3a.S3AFileSystem</value>
+  </property>
+  <property>
+    <name>fs.s3a.aws.credentials.provider</name>
+    <value>com.amazonaws.auth.EnvironmentVariableCredentialsProvider</value>
+  </property>
+  <property>
+    <name>fs.s3a.path.style.access</name>
+    <value>true</value>
+  </property>
+  <property>
+    <name>fs.s3a.connection.ssl.enabled</name>
+    <value>true</value>
+  </property>
+  <property>
+    <name>datanucleus.schema.autoCreateAll</name>
+    <!-- true: bootstrap inicial. Em metastore já estabilizado, preferir false. -->
+    <value>true</value>
+  </property>
+</configuration>
