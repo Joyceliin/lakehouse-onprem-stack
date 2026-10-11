@@ -1,0 +1,181 @@
+# docker-compose.spark-vm1.yml
+# Spark isolado na VM1 — NÃO altera o Airflow/PostgreSQL existentes.
+# O Spark junta-se à rede Docker existente do Airflow para que o Airflow,
+# que roda na mesma VM, consiga submeter jobs via SparkSubmitOperator.
+#
+# Subir com:
+#   docker compose -f docker-compose.spark-vm1.yml up -d
+#
+# Pré-requisitos na VM2 (lakehouse): firewall liberando acesso à
+#   - MINIO_ENDPOINT  (HTTPS, porta 9000 no IP privado da VM2)
+#   - HIVE_METASTORE_URI (Thrift do Hive — porta em HIVE_METASTORE_PORT, padrão 9083)
+#
+# TLS: o MinIO da VM2 só fala HTTPS com certificado próprio. Copie o
+# public.crt gerado na VM2 (scripts/minio/gen-tls-certs.sh, com
+# LAKEHOUSE_PRIVATE_BIND_ADDRESS=<IP_PRIVADO_VM2> para o IP entrar no SAN)
+# para .env_secrets/minio_ca.crt nesta VM. É certificado público, não segredo.
+#
+# Imagem: build custom em ./config/spark, que já contém os JARs de Delta Lake
+# e hadoop-aws/S3 necessários para escrever no MinIO. Uma imagem Spark
+# genérica não traz essas dependências.
+#
+# Redes (VM1):
+#   spark        — criada por este compose (10.10.20.0/24); tráfego master ↔ worker
+#   airflow_net  — externa (10.10.10.0/24 do Airflow); SparkSubmitOperator → :7077
+#
+# Os IPs fixos na airflow_net não podem colidir com os dos serviços do Airflow
+# (conferir com: docker network inspect <AIRFLOW_DOCKER_NETWORK>).
+# Por padrão o Spark usa .30 (master), .31 (worker 1) e .32 (worker 2, opcional) na airflow_net.
+
+networks:
+  spark:
+    name: ${SPARK_DOCKER_NETWORK:-spark_net}
+    driver: bridge
+    ipam:
+      config:
+        - subnet: ${SPARK_DOCKER_SUBNET:-10.10.20.0/24}
+          gateway: ${SPARK_DOCKER_GATEWAY:-10.10.20.1}
+  airflow_net:
+    external: true
+    # Rede net_airflow do compose do Airflow — nome real: docker network ls
+    # (ex.: airflow_net_airflow quando COMPOSE_PROJECT_NAME=airflow)
+    name: ${AIRFLOW_DOCKER_NETWORK:-airflow_net_airflow}
+
+x-spark-networks-master: &spark-networks-master
+  spark:
+    ipv4_address: ${SPARK_MASTER_CONTAINER_IP:-10.10.20.10}
+  airflow_net:
+    ipv4_address: ${SPARK_MASTER_AIRFLOW_NET_IP:-10.10.10.30}
+
+x-spark-networks-worker: &spark-networks-worker
+  spark:
+    ipv4_address: ${SPARK_WORKER_1_CONTAINER_IP:-10.10.20.11}
+  airflow_net:
+    ipv4_address: ${SPARK_WORKER_1_AIRFLOW_NET_IP:-10.10.10.31}
+
+x-spark-networks-worker-2: &spark-networks-worker-2
+  spark:
+    ipv4_address: ${SPARK_WORKER_2_CONTAINER_IP:-10.10.20.12}
+  airflow_net:
+    ipv4_address: ${SPARK_WORKER_2_AIRFLOW_NET_IP:-10.10.10.32}
+
+# Secrets via volume bind em /etc/spark-secrets (fora de /opt/spark :ro).
+# Mesmo padrão do Trino na VM2 — evita /run/secrets (0400 root) e conflito com FS read-only.
+x-spark-volumes: &spark-volumes
+  - ./scripts:/opt/scripts:ro
+  - ./scripts:/opt/spark/jobs:ro
+  - ./scripts/reconciliation.py:/opt/delta-stack/scripts/reconciliation.py:ro
+  - ./config/spark/spark-defaults.conf.template:/opt/spark/conf/spark-defaults.conf.template:ro
+  # Worker Spark — JARs em config/spark/jars no host
+  - ./config/spark/jars:/opt/spark/extra-jars:ro
+  - spark-checkpoints:/opt/spark-checkpoints
+  - ${SPARK_SECRETS_DIR:-./.env_secrets}/minio_spark_process_access_key:/etc/spark-secrets/minio_spark_process_access_key:ro
+  - ${SPARK_SECRETS_DIR:-./.env_secrets}/minio_spark_process_secret_key:/etc/spark-secrets/minio_spark_process_secret_key:ro
+  - ${SPARK_SECRETS_DIR:-./.env_secrets}/spark_auth_secret:/etc/spark-secrets/spark_auth_secret:ro
+  - ${SPARK_SECRETS_DIR:-./.env_secrets}/postgres_password:/etc/spark-secrets/postgres_password:ro
+  # Certificado público do MinIO (config/minio/certs/public.crt da VM2, copiado para a VM1)
+  - ${SPARK_MINIO_CA_CERT:-${SPARK_SECRETS_DIR:-./.env_secrets}/minio_ca.crt}:/etc/spark-certs/minio-ca.crt:ro
+
+x-spark-runtime-env: &spark-runtime-env
+  AWS_ACCESS_KEY_ID_FILE: /etc/spark-secrets/minio_spark_process_access_key
+  AWS_SECRET_ACCESS_KEY_FILE: /etc/spark-secrets/minio_spark_process_secret_key
+  SPARK_AUTH_SECRET_FILE: /etc/spark-secrets/spark_auth_secret
+  POSTGRES_PASSWORD_FILE: /etc/spark-secrets/postgres_password
+  SPARK_UI_VIEW_ACLS: ${SPARK_UI_VIEW_ACLS:-airflow,root}
+  SPARK_UI_MODIFY_ACLS: ${SPARK_UI_MODIFY_ACLS:-airflow,root}
+  SPARK_UI_VIEW_ACLS_GROUPS: ${SPARK_UI_VIEW_ACLS_GROUPS:-}
+  SPARK_UI_MODIFY_ACLS_GROUPS: ${SPARK_UI_MODIFY_ACLS_GROUPS:-}
+  # Lakehouse na VM2 — usar IP privado da VM2 (não hostname Docker da VM2)
+  MINIO_ENDPOINT: ${MINIO_ENDPOINT:?defina MINIO_ENDPOINT=https://<IP_PRIVADO_VM2>:9000}
+  MINIO_CA_CERT: /etc/spark-certs/minio-ca.crt
+  HIVE_METASTORE_URI: ${HIVE_METASTORE_URI:?defina HIVE_METASTORE_URI=thrift://<IP_PRIVADO_VM2>:<HIVE_METASTORE_PORT>}
+  POSTGRES_HOST: ${POSTGRES_HOST:-airflow-postgres}
+  POSTGRES_PORT: ${POSTGRES_PORT:-5432}
+  POSTGRES_DB: ${POSTGRES_DB:-airflow}
+  POSTGRES_USER: ${POSTGRES_USER:-airflow}
+
+x-spark-common: &spark-common
+  image: delta-stack/spark:4.1.2
+  restart: unless-stopped
+  networks: *spark-networks-worker
+  environment:
+    <<: *spark-runtime-env
+    SPARK_MODE: worker
+    SPARK_MASTER_URL: spark://spark-master:7077
+  volumes: *spark-volumes
+  depends_on:
+    - spark-master
+
+services:
+
+  spark-master:
+    build:
+      context: ./config/spark
+      dockerfile: Dockerfile
+      args:
+        SPARK_BASE_IMAGE: apache/spark:4.1.2-scala2.13-java17-python3-ubuntu
+    image: delta-stack/spark:4.1.2
+    container_name: spark-master
+    restart: unless-stopped
+    environment:
+      <<: *spark-runtime-env
+      SPARK_MODE: master
+      SPARK_MASTER_OPTS: -Dspark.master.rest.enabled=false
+    ports:
+      - "127.0.0.1:${SPARK_MASTER_UI_PORT:-18080}:8080"  # UI — loopback, sem conflitar com Airflow
+    expose:
+      - "7077"  # cluster — airflow_net (Airflow) + spark (workers)
+    networks: *spark-networks-master
+    volumes: *spark-volumes
+    command: >
+      bash -c "
+        /opt/spark/sbin/start-master.sh &&
+        tail -f /opt/spark/logs/*.out
+      "
+
+  spark-worker-1:
+    <<: *spark-common
+    container_name: spark-worker-1
+    environment:
+      <<: *spark-runtime-env
+      SPARK_MODE: worker
+      SPARK_MASTER_URL: spark://spark-master:7077
+      SPARK_WORKER_MEMORY: ${SPARK_WORKER_MEMORY:-18G}
+      SPARK_WORKER_CORES: ${SPARK_WORKER_CORES:-4}
+    expose:
+      - "8081"
+    command: >
+      bash -c "
+        /opt/spark/sbin/start-worker.sh spark://spark-master:7077 &&
+        tail -f /opt/spark/logs/*.out
+      "
+
+  # Segundo worker — escala horizontal, opcional:
+  #   docker compose -f docker-compose.spark-vm1.yml --profile scale up -d
+  # O job não muda: o master distribui os executores entre os workers ativos.
+  spark-worker-2:
+    <<: *spark-common
+    container_name: spark-worker-2
+    profiles: ["scale"]
+    networks: *spark-networks-worker-2
+    environment:
+      <<: *spark-runtime-env
+      SPARK_MODE: worker
+      SPARK_MASTER_URL: spark://spark-master:7077
+      SPARK_WORKER_MEMORY: ${SPARK_WORKER_2_MEMORY:-${SPARK_WORKER_MEMORY:-18G}}
+      SPARK_WORKER_CORES: ${SPARK_WORKER_2_CORES:-${SPARK_WORKER_CORES:-4}}
+    expose:
+      - "8081"
+    command: >
+      bash -c "
+        /opt/spark/sbin/start-worker.sh spark://spark-master:7077 &&
+        tail -f /opt/spark/logs/*.out
+      "
+
+# Dimensionamento: a soma de SPARK_WORKER_MEMORY dos workers ativos precisa
+# deixar folga para o Airflow e o SO do host. Ao ligar o segundo worker no
+# mesmo host, reduza a memória de cada um (SPARK_WORKER_MEMORY e
+# SPARK_WORKER_2_MEMORY) ou aumente o host antes.
+
+volumes:
+  spark-checkpoints:

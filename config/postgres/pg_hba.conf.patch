@@ -1,0 +1,30 @@
+# pg_hba.conf.patch — APENAS as entradas NOVAS a adicionar no PostgreSQL da VM1.
+# NÃO substituir o pg_hba.conf real. Adicionar estas linhas e recarregar com:
+#   docker exec airflow-postgres psql -U postgres -c "SELECT pg_reload_conf();"
+#
+# Substituir <IP_VM1>, <IP_VM2> e <AIRFLOW_DOCKER_SUBNET> pelos valores reais.
+# Subnet Docker: docker network inspect <AIRFLOW_DOCKER_NETWORK> --format '{{range .IPAM.Config}}{{.Subnet}}{{end}}'
+# Exemplo WSL2: 10.10.10.0/24 (worker Spark em 10.10.10.4).
+
+# ── Spark (cluster mode) → tabelas de controle no banco airflow ────────────
+# O driver JDBC roda no spark-worker (IP da rede airflow_net), não no Airflow.
+# JDBC 42.7.4 (imagem delta-stack/spark) suporta scram-sha-256.
+host  airflow  airflow  <AIRFLOW_DOCKER_SUBNET>  scram-sha-256
+
+# Hive Metastore (VM2) -> banco hive_metastore na VM1
+# md5 inicial: driver JDBC antigo do Hive pode não suportar scram-sha-256.
+# Restringir ao IP exato do container/VM do Hive.
+host  hive_metastore  hive_user  <IP_VM2>/32   md5
+
+# Acesso local (mesma VM1) ao hive_metastore, se aplicável
+host  hive_metastore  hive_user  127.0.0.1/32  md5
+
+# Trino (VM2) -> camada de serving no PostgreSQL da VM1 (se usado)
+host  <SERVING_DB>    <SERVING_USER>  <IP_VM2>/32  scram-sha-256
+
+# ─────────────────────────────────────────────────────────────
+# Endurecimento recomendado ao aplicar este patch:
+# - remover regras abertas, se existirem (host all all 0.0.0.0/0 e ::/0),
+#   deixando só as entradas por IP acima;
+# - migrar `password_encryption` de md5 para scram-sha-256 (Postgres 14+),
+#   com o driver JDBC do Hive >= 42.2.5 antes da troca.

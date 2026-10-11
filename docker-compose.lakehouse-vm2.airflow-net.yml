@@ -1,0 +1,22 @@
+# Override DEV: conecta o MinIO à rede Docker do Airflow (mesmo host).
+# Produção (VM2 isolada): NÃO usar este arquivo — Airflow usa https://<IP_VM2>:9000.
+#
+# Pré-requisitos:
+#   1. Airflow já rodando (rede externa criada pelo compose do Airflow)
+#   2. No .env: AIRFLOW_DOCKER_NETWORK=airflow_net_airflow  (ou omitir — é o padrão)
+#
+# Subir:
+#   docker compose -f docker-compose.lakehouse-vm2.yml \
+#     -f docker-compose.lakehouse-vm2.airflow-net.yml up -d minio
+
+networks:
+  airflow_net:
+    external: true
+    name: ${AIRFLOW_DOCKER_NETWORK:-airflow_net_airflow}
+
+services:
+  minio:
+    networks:
+      lakehouse:
+        ipv4_address: ${MINIO_CONTAINER_IP:-10.10.10.10}
+      airflow_net: {}
