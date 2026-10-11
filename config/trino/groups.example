@@ -1,0 +1,14 @@
+# Mapeamento usuário → grupo (ACL Trino). Sem senhas.
+# Formato: grupo:user1,user2
+# Níveis: admin | engenharia | analista
+#
+# Em runtime na VM2 use .env_secrets/trino_groups.txt
+# (montado em /etc/trino-secrets/trino_groups.txt).
+# Gerar/atualizar com:
+#   ./scripts/trino/set-user.sh usr_k4t9 admin
+#   ./scripts/trino/set-user.sh usr_m2x7 engenharia
+#   ./scripts/trino/set-user.sh usr_p8d3 analista
+
+admin:usr_k4t9
+engenharia:
+analista:

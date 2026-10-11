@@ -1,0 +1,4 @@
+connector.name=postgresql
+connection-url=${ENV:TRINO_POSTGRES_JDBC_URL}
+connection-user=${ENV:TRINO_POSTGRES_USER}
+connection-password=${ENV:TRINO_POSTGRES_PASSWORD}

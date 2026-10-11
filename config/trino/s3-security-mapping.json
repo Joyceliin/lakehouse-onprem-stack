@@ -1,0 +1,23 @@
+{
+  "mappings": [
+    {
+      "prefix": "s3://bronze/",
+      "accessKey": "<ACCESS_KEY>",
+      "secretKey": "<SECRET_KEY>"
+    },
+    {
+      "prefix": "s3://silver/",
+      "accessKey": "<ACCESS_KEY>",
+      "secretKey": "<SECRET_KEY>"
+    },
+    {
+      "prefix": "s3://gold/",
+      "accessKey": "<ACCESS_KEY>",
+      "secretKey": "<SECRET_KEY>"
+    },
+    {
+      "accessKey": "<ACCESS_KEY>",
+      "secretKey": "<SECRET_KEY>"
+    }
+  ]
+}

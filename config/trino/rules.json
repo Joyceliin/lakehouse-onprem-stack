@@ -1,0 +1,140 @@
+{
+  "catalogs": [
+    {
+      "group": "admin",
+      "catalog": ".*",
+      "allow": "all"
+    },
+    {
+      "group": "engenharia",
+      "catalog": "delta",
+      "allow": "read-only"
+    },
+    {
+      "group": "engenharia",
+      "catalog": "system",
+      "allow": "read-only"
+    },
+    {
+      "group": "analista",
+      "catalog": "delta",
+      "allow": "read-only"
+    },
+    {
+      "group": "analista",
+      "catalog": "system",
+      "allow": "read-only"
+    }
+  ],
+  "schemas": [
+    {
+      "group": "admin",
+      "schema": ".*",
+      "owner": true
+    },
+    {
+      "group": "engenharia",
+      "catalog": "delta",
+      "schema": "(bronze|silver|gold)",
+      "owner": false
+    },
+    {
+      "group": "analista",
+      "catalog": "delta",
+      "schema": "(silver|gold)",
+      "owner": false
+    },
+    {
+      "group": "engenharia",
+      "catalog": "system",
+      "schema": ".*",
+      "owner": false
+    },
+    {
+      "group": "analista",
+      "catalog": "system",
+      "schema": ".*",
+      "owner": false
+    }
+  ],
+  "tables": [
+    {
+      "group": "admin",
+      "catalog": ".*",
+      "schema": ".*",
+      "table": ".*",
+      "privileges": ["SELECT", "INSERT", "DELETE", "UPDATE", "OWNERSHIP"]
+    },
+    {
+      "group": "engenharia",
+      "catalog": "delta",
+      "schema": "(bronze|silver|gold)",
+      "table": ".*",
+      "privileges": ["SELECT"]
+    },
+    {
+      "group": "analista",
+      "catalog": "delta",
+      "schema": "(silver|gold)",
+      "table": ".*",
+      "privileges": ["SELECT"]
+    },
+    {
+      "group": "engenharia",
+      "catalog": "system",
+      "schema": ".*",
+      "table": ".*",
+      "privileges": ["SELECT"]
+    },
+    {
+      "group": "analista",
+      "catalog": "system",
+      "schema": ".*",
+      "table": ".*",
+      "privileges": ["SELECT"]
+    }
+  ],
+  "procedures": [
+    {
+      "group": "admin",
+      "catalog": "delta",
+      "schema": "system",
+      "procedure": "register_table|unregister_table",
+      "privileges": ["EXECUTE"]
+    }
+  ],
+  "queries": [
+    {
+      "group": "admin",
+      "allow": ["execute", "view", "kill"]
+    },
+    {
+      "group": "engenharia",
+      "allow": ["execute", "view"]
+    },
+    {
+      "group": "analista",
+      "allow": ["execute", "view"]
+    }
+  ],
+  "system_information": [
+    {
+      "user": ".*",
+      "allow": ["read"]
+    }
+  ],
+  "system_session_properties": [
+    {
+      "group": "admin",
+      "allow": true
+    },
+    {
+      "group": "engenharia",
+      "allow": false
+    },
+    {
+      "group": "analista",
+      "allow": false
+    }
+  ]
+}
