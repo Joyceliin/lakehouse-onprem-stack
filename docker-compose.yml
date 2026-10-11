@@ -1,0 +1,272 @@
+# docker-compose.yml — stack LOCAL de desenvolvimento, tudo em um host.
+#
+# Feita para subir rápido e explorar: MinIO em HTTP, Trino sem autenticação,
+# credenciais por variável de ambiente (env_secrets/stack.secrets) e portas só
+# em 127.0.0.1. Usa configurações próprias em config/local/.
+#
+# Os controles de segurança descritos no README — TLS, Docker secrets, ACL do
+# Trino por grupo, policies de menor privilégio — valem para os composes das
+# VMs: docker-compose.lakehouse-vm2.yml e docker-compose.spark-vm1.yml.
+
+x-spark-common: &spark-common
+  build:
+    context: ./config/spark
+    dockerfile: Dockerfile
+  environment:
+    - SPARK_MODE=worker
+    - SPARK_MASTER_URL=spark://spark-master:7077
+    - SPARK_WORKER_MEMORY=2G
+    - SPARK_WORKER_CORES=2
+    - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+    - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+    - POSTGRES_HOST=${POSTGRES_HOST:-postgres}
+    - POSTGRES_PORT=${POSTGRES_PORT:-5432}
+    - POSTGRES_DB=${POSTGRES_DB}
+    - POSTGRES_USER=${POSTGRES_USER}
+    - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+    - CONTROL_DB_HOST=${CONTROL_DB_HOST:-postgres}
+    - CONTROL_DB_PORT=${CONTROL_DB_PORT:-5432}
+    - CONTROL_DB_NAME=${CONTROL_DB_NAME:-logs}
+    - CONTROL_DB_SCHEMA=${CONTROL_DB_SCHEMA:-public}
+    - CONTROL_DB_USER=${CONTROL_DB_USER}
+    - CONTROL_DB_PASSWORD=${CONTROL_DB_PASSWORD}
+    - MINIO_ENDPOINT=${MINIO_ENDPOINT:-http://minio:9000}
+    - HIVE_METASTORE_URI=${HIVE_METASTORE_URI:-thrift://hive-metastore:${HIVE_METASTORE_PORT:-9083}}
+  volumes:
+    - ./scripts:/opt/scripts:ro
+    - ./scripts/reconciliation.py:/opt/delta-stack/scripts/reconciliation.py:ro
+    - ${DELTA_PROJECTS_PATH:-./projects}:/opt/delta-projects:ro
+    - spark-checkpoints:/opt/spark-checkpoints
+    - ./config/spark/spark-defaults.conf.template:/opt/spark/conf/spark-defaults.conf.template
+    - ./config/spark/jars:/opt/spark/extra-jars:ro
+  depends_on:
+    - spark-master
+  command: >
+    bash -c "
+      /opt/spark/sbin/start-worker.sh spark://spark-master:7077 &&
+      tail -f /opt/spark/logs/*.out
+    "
+
+services:
+
+  # ─────────────────────────────────────────
+  # POSTGRESQL (metadados e controle da stack)
+  # ─────────────────────────────────────────
+  postgres:
+    image: postgres:15
+    container_name: postgres
+    environment:
+      POSTGRES_USER: ${POSTGRES_USER}
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD}
+      POSTGRES_DB: ${POSTGRES_DB}
+    command: >
+      postgres
+        -c wal_level=logical
+        -c max_replication_slots=10
+        -c max_wal_senders=10
+        -c password_encryption=md5
+        -c hba_file=/etc/postgresql/pg_hba.conf
+    ports:
+      - "${DELTA_BIND_ADDRESS:-127.0.0.1}:5432:5432"
+    volumes:
+      - postgres-data:/var/lib/postgresql/data
+      - ./scripts/init-postgres.sql:/docker-entrypoint-initdb.d/init.sql
+      - ./config/postgres/pg_hba.conf:/etc/postgresql/pg_hba.conf:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U ${POSTGRES_USER} -d ${POSTGRES_DB} -h localhost -p 5432"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  # ─────────────────────────────────────────
+  # MINIO (object storage S3-compatible)
+  # ─────────────────────────────────────────
+  minio:
+    image: minio/minio:latest
+    container_name: minio
+    command: server /data --console-address ":9001"
+    environment:
+      MINIO_ROOT_USER: ${MINIO_ROOT_USER}
+      MINIO_ROOT_PASSWORD: ${MINIO_ROOT_PASSWORD}
+    ports:
+      - "${DELTA_BIND_ADDRESS:-127.0.0.1}:9000:9000"
+      - "${DELTA_BIND_ADDRESS:-127.0.0.1}:9001:9001"
+    volumes:
+      - minio-data:/data
+    healthcheck:
+      test: ["CMD", "mc", "ready", "local"]
+      interval: 10s
+      timeout: 5s
+      retries: 5
+
+  minio-init:
+    image: minio/mc:latest
+    container_name: minio-init
+    depends_on:
+      minio:
+        condition: service_healthy
+    entrypoint: >
+      /bin/sh -c "
+        mc alias set local http://minio:9000 ${MINIO_ROOT_USER} ${MINIO_ROOT_PASSWORD};
+        mc mb -p local/bronze;
+        mc mb -p local/silver;
+        mc mb -p local/gold;
+        mc mb -p local/landing;
+        mc mb -p local/markers;
+        mc mb -p local/checkpoints;
+        echo 'Buckets criados';
+      "
+
+  # ─────────────────────────────────────────
+  # KAFKA (KRaft mode)
+  # ─────────────────────────────────────────
+  kafka:
+    image: confluentinc/cp-kafka:7.5.0
+    container_name: kafka
+    ports:
+      - "${DELTA_BIND_ADDRESS:-127.0.0.1}:9092:9092"
+    environment:
+      CLUSTER_ID: _CK54_3ZRhmQ4n7KY_XaIQ
+      KAFKA_CLUSTER_ID: _CK54_3ZRhmQ4n7KY_XaIQ
+      KAFKA_PROCESS_ROLES: broker,controller
+      KAFKA_NODE_ID: 1
+      KAFKA_CONTROLLER_LISTENER_NAMES: CONTROLLER
+      KAFKA_LISTENERS: PLAINTEXT://0.0.0.0:29092,PLAINTEXT_HOST://0.0.0.0:9092,CONTROLLER://0.0.0.0:9093
+      KAFKA_ADVERTISED_LISTENERS: PLAINTEXT://kafka:29092,PLAINTEXT_HOST://${KAFKA_ADVERTISED_HOST:-localhost}:9092
+      KAFKA_LISTENER_SECURITY_PROTOCOL_MAP: PLAINTEXT:PLAINTEXT,PLAINTEXT_HOST:PLAINTEXT,CONTROLLER:PLAINTEXT
+      KAFKA_INTER_BROKER_LISTENER_NAME: PLAINTEXT
+      KAFKA_CONTROLLER_QUORUM_VOTERS: 1@kafka:9093
+      KAFKA_OFFSETS_TOPIC_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_REPLICATION_FACTOR: 1
+      KAFKA_TRANSACTION_STATE_LOG_MIN_ISR: 1
+      KAFKA_AUTO_CREATE_TOPICS_ENABLE: "true"
+    volumes:
+      - kafka-data:/var/lib/kafka/data
+    healthcheck:
+      test: ["CMD", "kafka-topics", "--bootstrap-server", "localhost:9092", "--list"]
+      interval: 15s
+      timeout: 10s
+      retries: 5
+
+  # ─────────────────────────────────────────
+  # HIVE METASTORE
+  # ─────────────────────────────────────────
+  hive-metastore:
+    build:
+      context: ./config/hive
+      dockerfile: Dockerfile
+    image: delta-stack/hive-metastore:3.1.3
+    container_name: hive-metastore
+    depends_on:
+      postgres:
+        condition: service_healthy
+    environment:
+      SERVICE_NAME: metastore
+      METASTORE_PORT: ${HIVE_METASTORE_PORT:-9083}
+      DB_DRIVER: postgres
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      SERVICE_OPTS: >-
+        -Djavax.jdo.option.ConnectionDriverName=org.postgresql.Driver
+        -Djavax.jdo.option.ConnectionURL=jdbc:postgresql://postgres:5432/hive_metastore
+        -Djavax.jdo.option.ConnectionUserName=${POSTGRES_USER}
+        -Djavax.jdo.option.ConnectionPassword=${POSTGRES_PASSWORD}
+    ports:
+      - "${DELTA_BIND_ADDRESS:-127.0.0.1}:${HIVE_METASTORE_PORT:-9083}:${HIVE_METASTORE_PORT:-9083}"
+    volumes:
+      - ./config/local/hive-site.xml:/opt/hive/conf/hive-site.xml:ro
+
+  # ─────────────────────────────────────────
+  # APACHE SPARK (imagem própria)
+  # ─────────────────────────────────────────
+  spark-master:
+    build:
+      context: ./config/spark
+      dockerfile: Dockerfile
+    container_name: spark-master
+    environment:
+      - SPARK_MODE=master
+      - AWS_ACCESS_KEY_ID=${AWS_ACCESS_KEY_ID}
+      - AWS_SECRET_ACCESS_KEY=${AWS_SECRET_ACCESS_KEY}
+      - POSTGRES_HOST=${POSTGRES_HOST:-postgres}
+      - POSTGRES_PORT=${POSTGRES_PORT:-5432}
+      - POSTGRES_DB=${POSTGRES_DB}
+      - POSTGRES_USER=${POSTGRES_USER}
+      - POSTGRES_PASSWORD=${POSTGRES_PASSWORD}
+      - CONTROL_DB_HOST=${CONTROL_DB_HOST:-postgres}
+      - CONTROL_DB_PORT=${CONTROL_DB_PORT:-5432}
+      - CONTROL_DB_NAME=${CONTROL_DB_NAME:-logs}
+      - CONTROL_DB_SCHEMA=${CONTROL_DB_SCHEMA:-public}
+      - CONTROL_DB_USER=${CONTROL_DB_USER}
+      - CONTROL_DB_PASSWORD=${CONTROL_DB_PASSWORD}
+      - MINIO_ENDPOINT=${MINIO_ENDPOINT:-http://minio:9000}
+      - HIVE_METASTORE_URI=${HIVE_METASTORE_URI:-thrift://hive-metastore:${HIVE_METASTORE_PORT:-9083}}
+    ports:
+      - "${DELTA_BIND_ADDRESS:-127.0.0.1}:8080:8080"
+      - "${DELTA_BIND_ADDRESS:-127.0.0.1}:7077:7077"
+    volumes:
+      - ./scripts:/opt/scripts:ro
+      - ./scripts/reconciliation.py:/opt/delta-stack/scripts/reconciliation.py:ro
+      - ${DELTA_PROJECTS_PATH:-./projects}:/opt/delta-projects:ro
+      - ./config/spark/spark-defaults.conf.template:/opt/spark/conf/spark-defaults.conf.template
+      - ./config/spark/jars:/opt/spark/extra-jars:ro
+      - spark-checkpoints:/opt/spark-checkpoints
+    command: >
+      bash -c "
+        /opt/spark/sbin/start-master.sh &&
+        tail -f /opt/spark/logs/*.out
+      "
+
+  spark-worker-1:
+    <<: *spark-common
+    container_name: spark-worker-1
+
+  spark-worker-2:
+    <<: *spark-common
+    container_name: spark-worker-2
+
+  # ─────────────────────────────────────────
+  # TRINO
+  # ─────────────────────────────────────────
+  trino:
+    image: trinodb/trino:435
+    container_name: trino
+    depends_on:
+      - hive-metastore
+      - minio
+    environment:
+      AWS_ACCESS_KEY_ID: ${AWS_ACCESS_KEY_ID}
+      AWS_SECRET_ACCESS_KEY: ${AWS_SECRET_ACCESS_KEY}
+      AWS_REGION: us-east-1
+      HIVE_METASTORE_PORT: ${HIVE_METASTORE_PORT:-9083}
+      HIVE_METASTORE_URI: thrift://hive-metastore:${HIVE_METASTORE_PORT:-9083}
+    ports:
+      - "${DELTA_BIND_ADDRESS:-127.0.0.1}:8090:8080"
+    volumes:
+      # Só o catálogo local. Servidor, JVM e nó usam o padrão da imagem:
+      # nó único, HTTP na 8080, sem autenticação.
+      - ./config/local/trino/catalog:/etc/trino/catalog:ro
+
+  # ─────────────────────────────────────────
+  # KAFKA UI
+  # ─────────────────────────────────────────
+  kafka-ui:
+    image: provectuslabs/kafka-ui:latest
+    container_name: kafka-ui
+    depends_on:
+      - kafka
+    ports:
+      - "${DELTA_BIND_ADDRESS:-127.0.0.1}:8085:8080"
+    environment:
+      KAFKA_CLUSTERS_0_NAME: local
+      KAFKA_CLUSTERS_0_BOOTSTRAPSERVERS: kafka:29092
+
+volumes:
+  postgres-data:
+  minio-data:
+  kafka-data:
+  spark-checkpoints:
+
+networks:
+  default:
+    name: delta-stack
