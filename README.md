@@ -1,13 +1,10 @@
 # Lakehouse On-Prem Stack
 
 Infraestrutura de um lakehouse em servidores próprios, em Docker Compose —
-**MinIO (S3) + Delta Lake + Hive Metastore + Trino + Spark** — separada em
-duas VMs, com acesso controlado por perfil e scripts de operação para manter o
+**MinIO (S3) + Delta Lake + Hive Metastore + Trino + Spark** — separada em VMs, 
+com acesso controlado por perfil e scripts de operação para manter o
 repositório de dados saudável.
 
-> Versão genérica de um projeto real. Servidores, IPs, domínios, nomes de
-> projeto e contas foram substituídos por valores fictícios. Nenhum segredo
-> está no repositório.
 
 ## Lakehouse no modelo da Databricks, com peças de código aberto
 
@@ -35,7 +32,7 @@ sem nuvem pública disponível e com dados sensíveis (LGPD). Requisitos:
 
 | Entrega | Ganho |
 |---|---|
-| Topologia em **2 VMs** | VM1: Spark (master e workers). VM2: MinIO, Hive Metastore (+ Postgres) e Trino. Processamento isolado do armazenamento e do catálogo |
+| Topologia em **2+ VMs** | VM1: Spark (master e workers). VM2: MinIO, Hive Metastore (+ Postgres) e Trino. Processamento isolado do armazenamento e do catálogo |
 | Só plataforma | Nenhuma regra de negócio: os projetos são montados em modo somente leitura em `/opt/delta-projects/<projeto>` pela integração contínua |
 | Controle de acesso do Trino em **3 níveis** | `admin` (tudo), `engenharia` (bronze/silver/gold), `analista` (só silver/gold). Usuários com hash bcrypt, gerados por script — senha exibida uma vez, direto para o cofre |
 | **Políticas do MinIO de menor privilégio** | Trino e Hive só leem (políticas internas, registradas na inicialização). Contas de carga recebem política gerada por `scripts/minio/set-user.sh`, limitada a bucket/prefixo e sem `DeleteObject` por padrão. `spark-ingest.json` e `spark-process.json` são modelos para as contas de ingestão e processamento, as únicas que apagam objetos — reescrita e VACUUM de tabela Delta exigem isso. A conta de consulta **não consegue gravar** |
